@@ -2,7 +2,7 @@
 
 ## Download
 
-There is a link to releases on the left side of this page.
+There is a link to releases on the right side of this page.
 - For windows, download radiation-snare.exe
 - For linux, download radiation-snare
 
