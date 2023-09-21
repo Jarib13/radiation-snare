@@ -17,6 +17,31 @@ const Corruption = struct {
     effected_bits: u128,
 };
 
+const BitMode = enum {
+    Zeroes,
+    Ones,
+};
+
+const Sheet = struct {
+    mode: BitMode = BitMode.Zeroes,
+    bits: []u128,
+
+    fn init(alloc: std.mem.Allocator, mode: BitMode, size: usize) !Sheet {
+        var self = Sheet{
+            .mode = mode,
+            .bits = try alloc.alloc(u128, size / @sizeOf(u128)),
+        };
+
+        if (mode == .Zeroes) {
+            @memset(self.bits, 0);
+        } else if (mode == .Ones) {
+            @memset(self.bits, ~@as(u128, 0));
+        }
+
+        return self;
+    }
+};
+
 pub fn main() !void {
     var text_buffer: [1024]u8 = undefined;
 
@@ -25,16 +50,16 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     var alloc = gpa.allocator();
 
-    var sheet = try alloc.alloc(u128, (4 * gigabyte) / @sizeOf(u128));
-    @memset(sheet, 0);
+    var sheets = std.ArrayList(Sheet).init(alloc);
+    try sheets.append(try Sheet.init(alloc, BitMode.Zeroes, 4 * gigabyte));
 
     var corruptions = std.ArrayList(Corruption).init(alloc);
 
     std.debug.print("Radiation-snare initialized, beginning periodic scans\n", .{});
 
-    sheet[80085] = 1 << 6;
-    sheet[8008135] = 1 << 73;
-    sheet[69420] = 1 << 44;
+    sheets.items[0].bits[80085] = 1 << 6;
+    sheets.items[0].bits[8008135] = 1 << 73;
+    sheets.items[0].bits[69420] = 1 << 44;
 
     var last_corruption_count: usize = 0;
     var scans: usize = 0;
@@ -47,15 +72,23 @@ pub fn main() !void {
         }
 
         var timer = try std.time.Timer.start();
-        for (sheet, 0..) |*element, index| {
-            if (element.* != 0) {
-                try corruptions.append(Corruption{
-                    .time_discovered = std.time.milliTimestamp(),
-                    .effected_element = index,
-                    .effected_bits = element.*,
-                    .memory_address = @intFromPtr(element),
-                });
-                element.* = 0;
+        for (sheets.items) |sheet| {
+            var expected_bits: u128 = 0;
+
+            if (sheet.mode == .Ones) {
+                expected_bits = ~@as(u128, 0);
+            }
+
+            for (sheet.bits, 0..) |*element, index| {
+                if (element.* != expected_bits) {
+                    try corruptions.append(Corruption{
+                        .time_discovered = std.time.milliTimestamp(),
+                        .effected_element = index,
+                        .effected_bits = element.*,
+                        .memory_address = @intFromPtr(element),
+                    });
+                    element.* = expected_bits;
+                }
             }
         }
 
