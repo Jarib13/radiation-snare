@@ -10,6 +10,23 @@ const kibibyte = byte * 1024;
 const mibibyte = kibibyte * 1024;
 const gibibyte = mibibyte * 1024;
 
+fn generate_alternating_bits() u128 {
+    var bits: u128 = 0;
+    for (0..128) |bit| {
+        if (bit % 2 == 0) {
+            bits |= @as(u128, 1) <<| bit;
+        }
+    }
+
+    return bits;
+}
+
+const alternating_bit_pattern = generate_alternating_bits();
+
+test "bit_patterns" {
+    std.debug.print("alternating = {b:O>128}\n", .{alternating_bit_pattern});
+}
+
 const Corruption = struct {
     time_discovered: i64,
     effected_element: usize,
@@ -20,11 +37,20 @@ const Corruption = struct {
 const BitMode = enum {
     Zeroes,
     Ones,
+    Alternating,
 };
 
 const Sheet = struct {
     mode: BitMode = BitMode.Zeroes,
     bits: []u128,
+
+    fn get_expected_bits(self: Sheet) u128 {
+        return switch (self.mode) {
+            .Zeroes => 0,
+            .Ones => ~@as(u128, 0),
+            .Alternating => alternating_bit_pattern,
+        };
+    }
 
     fn init(alloc: std.mem.Allocator, mode: BitMode, size: usize) !Sheet {
         var self = Sheet{
@@ -32,11 +58,7 @@ const Sheet = struct {
             .bits = try alloc.alloc(u128, size / @sizeOf(u128)),
         };
 
-        if (mode == .Zeroes) {
-            @memset(self.bits, 0);
-        } else if (mode == .Ones) {
-            @memset(self.bits, ~@as(u128, 0));
-        }
+        @memset(self.bits, self.get_expected_bits());
 
         return self;
     }
@@ -45,25 +67,28 @@ const Sheet = struct {
 pub fn main() !void {
     var text_buffer: [1024]u8 = undefined;
 
-    std.debug.print("Initializing radiation-snare...\n", .{});
+    std.debug.print("Initializing radiation-snare... ", .{});
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     var alloc = gpa.allocator();
 
     var sheets = std.ArrayList(Sheet).init(alloc);
-    try sheets.append(try Sheet.init(alloc, BitMode.Zeroes, 4 * gigabyte));
+    try sheets.append(try Sheet.init(alloc, BitMode.Zeroes, 1 * gigabyte));
+    try sheets.append(try Sheet.init(alloc, BitMode.Alternating, 1 * gigabyte));
+    try sheets.append(try Sheet.init(alloc, BitMode.Ones, 2 * gigabyte));
 
     var corruptions = std.ArrayList(Corruption).init(alloc);
 
-    std.debug.print("Radiation-snare initialized, beginning periodic scans\n", .{});
+    std.debug.print("Done\nBeginning periodic scans... \n", .{});
 
-    sheets.items[0].bits[80085] = 1 << 6;
-    sheets.items[0].bits[8008135] = 1 << 73;
-    sheets.items[0].bits[69420] = 1 << 44;
+    sheets.items[0].bits[80085] |= 1 << 6;
+    sheets.items[1].bits[8008135] |= 1 << 73;
+    sheets.items[2].bits[69420] &= ~@as(u128, 1 << 44);
 
     var last_corruption_count: usize = 0;
     var scans: usize = 0;
     const scans_per_msg = 1;
+
     while (true) : (scans += 1) {
         defer std.time.sleep(std.time.ns_per_s * 300);
 
@@ -73,11 +98,7 @@ pub fn main() !void {
 
         var timer = try std.time.Timer.start();
         for (sheets.items) |sheet| {
-            var expected_bits: u128 = 0;
-
-            if (sheet.mode == .Ones) {
-                expected_bits = ~@as(u128, 0);
-            }
+            var expected_bits: u128 = sheet.get_expected_bits();
 
             for (sheet.bits, 0..) |*element, index| {
                 if (element.* != expected_bits) {
